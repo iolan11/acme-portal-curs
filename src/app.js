@@ -41,10 +41,11 @@ function createApp() {
     });
   });
 
+  /** Promeses en curs per email: evita crear dos tokens en POST concurrents. */
+  const pendingInvitations = new Map();
+
   /**
-   * Invitacions.
-   * BUG DE CURSA: si es crida dues vegades molt ràpid amb el mateix email,
-   * es poden crear dos tokens (no hi ha bloqueig / comprovació atòmica).
+   * Invitacions: un sol token per email (409 si ja existeix o si un altre POST el crea).
    */
   app.post('/api/invitations', requireAuth, async (req, res) => {
     const email = (req.body && req.body.email) || '';
@@ -52,19 +53,44 @@ function createApp() {
       return res.status(400).json({ error: 'Email invàlid' });
     }
 
-    // Simula latència de xarxa / BD
-    await delay(150);
-
-    if (invitations.has(email)) {
-      // En un fix correcte, aquí retornaríem 409 o el mateix token de forma segura.
-      // Ara mateix encara hi ha una finestra de cursa abans del .has (lab unitat 10 / 02).
+    const existing = invitations.get(email);
+    if (existing) {
+      return res.status(409).json({
+        error: 'Ja existeix una invitació per aquest email',
+        email,
+        token: existing.token,
+      });
     }
 
-    await delay(150);
-    const token = `inv_${Math.random().toString(36).slice(2)}_${Date.now()}`;
-    invitations.set(email, { token, createdAt: Date.now() });
+    let isLeader = false;
+    let createPromise = pendingInvitations.get(email);
+    if (!createPromise) {
+      isLeader = true;
+      createPromise = (async () => {
+        // Simula latència de xarxa / BD
+        await delay(150);
+        await delay(150);
+        const again = invitations.get(email);
+        if (again) return again;
+        const token = `inv_${Math.random().toString(36).slice(2)}_${Date.now()}`;
+        const row = { token, createdAt: Date.now() };
+        invitations.set(email, row);
+        return row;
+      })().finally(() => {
+        pendingInvitations.delete(email);
+      });
+      pendingInvitations.set(email, createPromise);
+    }
 
-    return res.status(201).json({ email, token });
+    const row = await createPromise;
+    if (isLeader) {
+      return res.status(201).json({ email, token: row.token });
+    }
+    return res.status(409).json({
+      error: 'Ja existeix una invitació per aquest email',
+      email,
+      token: row.token,
+    });
   });
 
   app.get('/api/invitations/:email', requireAuth, (req, res) => {
