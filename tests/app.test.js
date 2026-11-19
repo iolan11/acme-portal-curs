@@ -33,10 +33,11 @@ describe('ACME Portal', () => {
     expect(res.body.ticketId).toMatch(/^T-/);
   });
 
-  test('contacte amb urgent falla (bug conegut)', async () => {
+  test('contacte amb urgent crea ticket', async () => {
     const res = await request(app)
       .post('/api/contact')
       .send({ name: 'A', email: 'a@t.com', message: 'cas urgent siusplau' });
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(201);
+    expect(res.body.ticketId).toMatch(/^T-/);
   });
 });
